@@ -250,10 +250,11 @@ async function getMemes() {
             coins.sort((a, b) => Math.abs(b.change) - Math.abs(a.change));
             
             // Return top 8
+            const displayNames = { 'SPX': 'SPX6900', 'APE': 'APECOIN' };
             const results = coins.slice(0, 8).map(coin => {
                 console.log(`  ${coin.symbol}: mcap=$${(coin.marketCap/1000000).toFixed(0)}M, change=${coin.change?.toFixed(2)}%`);
                 return {
-                    name: coin.symbol,
+                    name: displayNames[coin.symbol] || coin.symbol,
                     link: `https://coinmarketcap.com/currencies/${coin.slug}/`,
                     price: coin.marketCap,
                     change: coin.change
@@ -558,7 +559,7 @@ async function generateGraphic(data) {
     
     const formatMemeValue = (item) => {
         if (!item || item.price === null || item.price === undefined) return 'N/A';
-        if (item.price >= 1000000000) return '$' + Math.round(item.price / 1000000000) + 'B';
+        if (item.price >= 1000000000) return '$' + (item.price / 1000000000).toFixed(1) + 'B';
         if (item.price >= 1000000) return '$' + Math.round(item.price / 1000000) + 'M';
         return '$' + Math.round(item.price).toLocaleString('en-US');
     };
@@ -708,9 +709,22 @@ async function generateGraphic(data) {
 </body>
 </html>`;
     
-    // Return HTML for client-side rendering
-    // Client can use html2canvas or similar to convert to image
-    return html;
+    // Use Puppeteer to render HTML to PNG
+    const puppeteer = require('puppeteer');
+    const browser = await puppeteer.launch({ 
+        headless: 'new',
+        args: ['--no-sandbox', '--disable-setuid-sandbox']
+    });
+    const page = await browser.newPage();
+    await page.setViewport({ width: 646, height: 300 });
+    await page.setContent(html, { waitUntil: 'networkidle0' });
+    
+    // Screenshot the table element
+    const table = await page.$('.table');
+    const screenshot = await table.screenshot({ type: 'png' });
+    await browser.close();
+    
+    return screenshot;
 }
 
 // ============ SERVER ============
@@ -734,11 +748,12 @@ const server = http.createServer(async (req, res) => {
             req.on('data', chunk => body += chunk);
             req.on('end', async () => {
                 const data = JSON.parse(body);
-                const html = await generateGraphic(data);
+                const imageBuffer = await generateGraphic(data);
                 res.writeHead(200, { 
-                    'Content-Type': 'text/html'
+                    'Content-Type': 'image/png',
+                    'Content-Disposition': 'attachment; filename="market-snapshot.png"'
                 });
-                res.end(html);
+                res.end(imageBuffer);
             });
         } catch (e) {
             console.error('Generate graphic error:', e);
