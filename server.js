@@ -174,34 +174,58 @@ async function getFinance() {
     return results;
 }
 
-// ============ CRYPTO (CoinGecko) ============
+// ============ CRYPTO (CoinMarketCap, CoinGecko fallback) ============
+// Last good crypto data (served if both APIs fail)
+let cryptoCache = null;
+
 async function getCrypto() {
     console.log('\n🌙 Fetching Crypto data...');
     const cryptos = [
-        { id: 'bitcoin', name: 'BTC', link: 'https://www.coingecko.com/en/coins/bitcoin' },
-        { id: 'ethereum', name: 'ETH', link: 'https://www.coingecko.com/en/coins/ethereum' },
-        { id: 'solana', name: 'SOL', link: 'https://www.coingecko.com/en/coins/solana' }
+        { id: 'bitcoin', cmcId: 1, name: 'BTC', link: 'https://www.coingecko.com/en/coins/bitcoin' },
+        { id: 'ethereum', cmcId: 1027, name: 'ETH', link: 'https://www.coingecko.com/en/coins/ethereum' },
+        { id: 'solana', cmcId: 5426, name: 'SOL', link: 'https://www.coingecko.com/en/coins/solana' }
     ];
 
+    // 1) CoinMarketCap (separate rate limit from CoinGecko NFT fetch)
+    try {
+        const ids = cryptos.map(c => c.cmcId).join(',');
+        const url = `https://pro-api.coinmarketcap.com/v2/cryptocurrency/quotes/latest?id=${ids}&convert=USD`;
+        const response = await fetchJSON(url, { 'X-CMC_PRO_API_KEY': CMC_API_KEY });
+        console.log(`  CMC status: ${response.status}`);
+
+        if (response.status === 200 && response.data?.data) {
+            const results = cryptos.map(c => {
+                const q = response.data.data[c.cmcId]?.quote?.USD;
+                console.log(`  ${c.name}: price=${q?.price}, change=${q?.percent_change_24h?.toFixed(2)}%`);
+                return { name: c.name, link: c.link, price: q?.price ?? null, change: q?.percent_change_24h ?? null };
+            });
+            if (results.every(r => r.price !== null)) {
+                cryptoCache = results;
+                return results;
+            }
+        } else {
+            console.log(`  CMC failed: ${JSON.stringify(response.data).substring(0, 200)}`);
+        }
+    } catch (e) {
+        console.error(`  CMC error: ${e.message}`);
+    }
+
+    // 2) Fallback: CoinGecko (keyless requests are now 403'd — must send the demo key)
     try {
         const ids = cryptos.map(c => c.id).join(',');
         const url = `https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd&include_24hr_change=true`;
-        const response = await fetchJSON(url);
-
+        const response = await fetchJSON(url, { 'x-cg-demo-api-key': COINGECKO_API_KEY });
         console.log(`  CoinGecko status: ${response.status}`);
 
         if (response.status === 200 && response.data) {
-            const results = cryptos.map(crypto => {
-                const data = response.data[crypto.id];
-                console.log(`  ${crypto.name}: price=${data?.usd}, change=${data?.usd_24h_change?.toFixed(2)}%`);
-                return {
-                    name: crypto.name,
-                    link: crypto.link,
-                    price: data?.usd || null,
-                    change: data?.usd_24h_change || null
-                };
+            const results = cryptos.map(c => {
+                const d = response.data[c.id];
+                return { name: c.name, link: c.link, price: d?.usd ?? null, change: d?.usd_24h_change ?? null };
             });
-            return results;
+            if (results.every(r => r.price !== null)) {
+                cryptoCache = results;
+                return results;
+            }
         } else {
             console.log(`  CoinGecko failed: ${JSON.stringify(response.data).substring(0, 200)}`);
         }
@@ -209,6 +233,11 @@ async function getCrypto() {
         console.error(`  CoinGecko error: ${e.message}`);
     }
 
+    // 3) Last known good data
+    if (cryptoCache) {
+        console.log('  Both APIs failed, serving last cached crypto data');
+        return cryptoCache;
+    }
     return cryptos.map(c => ({ name: c.name, link: c.link, price: null, change: null }));
 }
 
