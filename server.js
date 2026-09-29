@@ -738,22 +738,9 @@ async function generateGraphic(data) {
 </body>
 </html>`;
     
-    // Use Puppeteer to render HTML to PNG
-    const puppeteer = require('puppeteer');
-    const browser = await puppeteer.launch({ 
-        headless: 'new',
-        args: ['--no-sandbox', '--disable-setuid-sandbox']
-    });
-    const page = await browser.newPage();
-    await page.setViewport({ width: 646, height: 300 });
-    await page.setContent(html, { waitUntil: 'networkidle0' });
-    
-    // Screenshot the table element
-    const table = await page.$('.table');
-    const screenshot = await table.screenshot({ type: 'png' });
-    await browser.close();
-    
-    return screenshot;
+    // Return HTML for client-side rendering
+    // index.html converts it to PNG with html2canvas (Puppeteer isn't available on Vercel)
+    return html;
 }
 
 // ============ SERVER ============
@@ -777,12 +764,11 @@ const server = http.createServer(async (req, res) => {
             req.on('data', chunk => body += chunk);
             req.on('end', async () => {
                 const data = JSON.parse(body);
-                const imageBuffer = await generateGraphic(data);
-                res.writeHead(200, { 
-                    'Content-Type': 'image/png',
-                    'Content-Disposition': 'attachment; filename="market-snapshot.png"'
+                const html = await generateGraphic(data);
+                res.writeHead(200, {
+                    'Content-Type': 'text/html'
                 });
-                res.end(imageBuffer);
+                res.end(html);
             });
         } catch (e) {
             console.error('Generate graphic error:', e);
